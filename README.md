@@ -1,6 +1,6 @@
 # Nuke Text Editor
 
-A clean and efficient Text Editor for Nuke, designed to help artists and technical directors write notes, manage tasks, and edit text files directly inside the Nuke environment.
+A clean and efficient Text Editor for Nuke, designed to help artists write notes, manage tasks, and edit text files directly inside the Nuke environment.
 
 Developed by Pedro Gartner.
 
