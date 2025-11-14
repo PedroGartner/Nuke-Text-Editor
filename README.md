@@ -53,7 +53,7 @@ Shows the editor name, version, author, and GitHub link.
 import Nuke_Text_Editor_v5_8
 nuke.menu("Nuke").addCommand(
     "PGartner/Text Editor",
-    "Nuke_Text_Editor_v5_8.show_texteditor()"
+    "TextEditor.show_texteditor()"
 )
 ```
 
