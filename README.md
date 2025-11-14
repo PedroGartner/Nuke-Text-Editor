@@ -50,7 +50,7 @@ Shows the editor name, version, author, and GitHub link.
 2. Open or create a file named menu.py inside the same directory and add the following code:
 
 ```python
-import Nuke_Text_Editor_v5_8
+import TextEditor
 nuke.menu("Nuke").addCommand(
     "PGartner/Text Editor",
     "TextEditor.show_texteditor()"
