@@ -87,10 +87,6 @@ All important parts of the code include comments to guide customization.
 ## Author
 
 Pedro Gartner
-
 - IMDB: https://www.imdb.com/pt/name/nm9884333/
 - LinkedIn: https://www.linkedin.com/in/pedro-g-6b265a13a/
 - GitHub: https://github.com/PedroGartner
-IMDB: https://www.imdb.com/pt/name/nm9884333/
-LinkedIn: https://www.linkedin.com/in/pedro-g-6b265a13a/
-GitHub: https://github.com/PedroGartner
