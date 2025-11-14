@@ -44,7 +44,7 @@ Shows the editor name, version, author, and GitHub link.
 
 1. Download the following files and place them in your Nuke plugin directory (for example: ~/.nuke/):
 
-- Nuke_Text_Editor_v5_8.py
+- TextEditor.py
 - FileBrowser.py
 
 2. Open or create a file named menu.py inside the same directory and add the following code:
