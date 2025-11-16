@@ -120,5 +120,6 @@ See **LICENSE** for details.
 
 Created by **Pedro Gartner**  
 LinkedIn: https://www.linkedin.com/in/pedro-g-6b265a13a/  
+IMDB: https://www.imdb.com/name/nm9884333/  
 GitHub: https://github.com/PedroGartner
 
