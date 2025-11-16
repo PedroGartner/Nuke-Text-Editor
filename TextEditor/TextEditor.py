@@ -1,0 +1,1878 @@
+# ------------------------------------------------------------- #
+#  Name: Nuke Text Editor ####################################  #
+#  Version: 7 (Safe Syntax Highlight, No Color Schemes) ##### #
+#  Author: Pedro Gartner #####################################  #
+# ############################################################  #
+#  Last Updated: 15th November, 2025 #########################  #
+# ------------------------------------------------------------- #
+#  DESCRIPTION: ##############################################  #
+# ------------------------------------------------------------- #
+#  Nuke Text Editor is a custom text editor panel for Nuke.     #
+#  It allows users to create, open, edit and save text files,   #
+#  manage notes and task lists, and format text directly inside #
+#  Nuke using a dark, compact interface.                        #
+#                                                               #
+#  Main features:                                               #
+#    - Rich text formatting (font, size, bold/italic/underline, #
+#      color, highlight, alignment).                            #
+#    - File browser sidebar for navigating folders and files.   #
+#    - New/Open/Save/Save As and Recent Files.                  #
+#    - Find / Replace dialog.                                   #
+#    - Word and character counter.                              #
+#    - About dialog with author and GitHub link.                #
+#    - Tabs: multiple documents open in one window.             #
+#    - Advanced tab controls (context menu, middle-click,       #
+#      drag-reorder, inline "+" tab like Notepad).              #
+#    - Medium-level syntax highlighting per extension, using    #
+#      Python's 're' (works in PySide2 and PySide6).            #
+# ------------------------------------------------------------- #
+
+import nuke
+import nukescripts
+import os
+import io
+import re
+
+try:
+    # Prefer PySide2 when available
+    from PySide2 import QtCore, QtGui, QtWidgets
+except ImportError:
+    # Fall back to PySide6 if PySide2 is not available
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+from FileBrowser import FileBrowser  # External file browser widget
+
+_text_editor_instance = None  # Global instance handle
+
+
+# ------------------------------------------------------------- #
+#  Extension -> language mapping for syntax highlight           #
+# ------------------------------------------------------------- #
+EXTENSION_LANGUAGE = {
+    ".py":   "python",
+    ".json": "json",
+    ".md":   "markdown",
+    ".mkd":  "markdown",
+    ".markdown": "markdown",
+    ".nk":   "nuke",
+    ".ini":  "ini",
+    ".cfg":  "ini",
+    ".html": "html",
+    ".htm":  "html",
+    ".xml":  "html",
+    ".js":   "javascript",
+    ".ts":   "javascript",
+    ".css":  "css",
+    ".c":    "c_like",
+    ".h":    "c_like",
+    ".cpp":  "c_like",
+    ".hpp":  "c_like",
+    ".java": "c_like",
+    ".sh":   "bash",
+    ".bat":  "batch",
+    ".cmd":  "batch",
+}
+
+
+# Minimap / indent guide configuration
+MINIMAP_WIDTH = 0  # minimap disabled; kept for compatibility
+INDENT_TAB_SIZE = 4  # spaces per indent level
+
+# File-type colors for tabs
+FILETYPE_TAB_COLORS = {
+    "python": QtGui.QColor("#50fa7b"),
+    "json": QtGui.QColor("#8be9fd"),
+    "markdown": QtGui.QColor("#ff79c6"),
+    "nuke": QtGui.QColor("#bd93f9"),
+    "ini": QtGui.QColor("#f1fa8c"),
+    "html": QtGui.QColor("#ffb86c"),
+    "javascript": QtGui.QColor("#f1fa8c"),
+    "css": QtGui.QColor("#8be9fd"),
+    "c_like": QtGui.QColor("#ffb86c"),
+    "bash": QtGui.QColor("#50fa7b"),
+    "batch": QtGui.QColor("#50fa7b"),
+    "text": QtGui.QColor("#bbbbbb"),
+}
+
+# ------------------------------------------------------------- #
+#  Simple, Nuke-safe syntax highlighter
+# ------------------------------------------------------------- #
+#  Simple, Nuke-safe syntax highlighter (Python 're'-based)     #
+# ------------------------------------------------------------- #
+class SimpleHighlighter(QtGui.QSyntaxHighlighter):
+    """
+    Medium-level, Nuke-safe syntax highlighter.
+
+    - Uses Python's 're' module instead of Qt's QRegExp / QRegularExpression,
+      so it works in both PySide2 and PySide6.
+    - Does NOT touch the base text color (inherits QTextEdit color).
+    - Adds colors only on top of existing text (keywords, strings, etc.).
+    """
+
+    def __init__(self, document):
+        """Function `__init__`: Auto-generated documentation placeholder."""
+        # Call Qt base class directly to avoid super() issues inside Nuke.
+        QtGui.QSyntaxHighlighter.__init__(self, document)
+        self.language = "text"
+        self.rules = []
+        self._build_rules("text")
+
+    def set_language(self, language):
+        """Change language and rebuild highlighting rules."""
+        lang = (language or "text").lower()
+        if lang == self.language and self.rules:
+            return
+        self.language = lang
+        self._build_rules(lang)
+        self.rehighlight()
+
+    def _build_rules(self, lang):
+        """Function `_build_rules`: Auto-generated documentation placeholder."""
+        self.rules = []  # list of (compiled_regex, QTextCharFormat)
+
+        # Helper to add a rule (pattern, format)
+        def add(pattern, color_hex, bold=False, italic=False):
+            """Function `add`: Auto-generated documentation placeholder."""
+            fmt = QtGui.QTextCharFormat()
+            fmt.setForeground(QtGui.QColor(color_hex))
+            if bold:
+                fmt.setFontWeight(QtGui.QFont.Bold)
+            if italic:
+                fmt.setFontItalic(True)
+            regex = re.compile(pattern)
+            self.rules.append((regex, fmt))
+
+        # ---------- Python ----------
+        if lang == "python":
+            keywords = [
+                "and", "as", "assert", "break", "class", "continue", "def",
+                "del", "elif", "else", "except", "False", "finally", "for",
+                "from", "global", "if", "import", "in", "is", "lambda",
+                "None", "nonlocal", "not", "or", "pass", "raise", "return",
+                "True", "try", "while", "with", "yield",
+            ]
+            add(r"\b(" + "|".join(keywords) + r")\b", "#ff79c6", bold=True)   # keywords
+            add(r"#.*$", "#6272a4", italic=True)                             # comments
+            add(r"'[^'\\]*'", "#f1fa8c")                                     # single-quoted strings
+            add(r'"[^"\\]*"', "#f1fa8c")                                     # double-quoted strings
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+            add(r"\b[A-Za-z_][A-Za-z0-9_]*(?=\()", "#50fa7b")                # function calls
+
+        # ---------- JSON ----------
+        elif lang == "json":
+            add(r'"[^"\\]*"\s*:', "#8be9fd", bold=True)                      # keys
+            add(r'"[^"\\]*"', "#f1fa8c")                                     # string values
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+            add(r"\b(true|false|null)\b", "#bd93f9", bold=True)              # booleans/null
+
+        # ---------- Markdown ----------
+        elif lang == "markdown":
+            add(r"^#{1,6}.*$", "#ff79c6", bold=True)                         # headings
+            add(r"\*\*[^*]+\*\*", "#f1fa8c", bold=True)                      # bold
+            add(r"\*[^*]+\*", "#bd93f9", italic=True)                        # italic
+            add(r"`[^`]+`", "#bd93f9")                                       # inline code
+            add(r"\[[^\]]+\]\([^)]+\)", "#8be9fd")                           # links
+
+        # ---------- Nuke .nk ----------
+        elif lang == "nuke":
+            nk_keywords = [
+                "push", "pop", "set", "add_layer", "inputs", "version",
+                "addUserKnob", "Animated", "Group", "Root", "Viewer",
+            ]
+            add(r"\b(" + "|".join(nk_keywords) + r")\b", "#ff79c6", bold=True)
+            add(r'"[^"\\]*"', "#f1fa8c")                                     # strings
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+            add(r"#.*$", "#6272a4", italic=True)                             # comments
+
+        # ---------- INI / CFG ----------
+        elif lang == "ini":
+            add(r"^\[[^\]]+\]", "#ff79c6", bold=True)                        # [section]
+            add(r"^[A-Za-z0-9_.]+(?=\s*=)", "#8be9fd")                       # key names
+            add(r"^[;#].*$", "#6272a4", italic=True)                         # comments
+            add(r'"[^"\\]*"', "#f1fa8c")                                     # string values
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+
+        # ---------- HTML / XML ----------
+        elif lang == "html":
+            add(r"</?[A-Za-z_][A-Za-z0-9_\-]*", "#ff79c6", bold=True)        # tags
+            add(r"\b[A-Za-z_:][A-Za-z0-9_\-:]*=", "#8be9fd")                 # attributes
+            add(r'"[^"\\]*"', "#f1fa8c")                                     # attribute values
+            add(r"<!--[^>]*-->", "#6272a4", italic=True)                     # comments
+
+        # ---------- JavaScript / TS ----------
+        elif lang == "javascript":
+            js_keywords = [
+                "var", "let", "const", "function", "return", "if", "else",
+                "for", "while", "do", "switch", "case", "break", "continue",
+                "new", "this", "class", "extends", "super", "import", "from",
+                "export", "default", "true", "false", "null", "undefined",
+            ]
+            add(r"\b(" + "|".join(js_keywords) + r")\b", "#ff79c6", bold=True)
+            add(r"\b[A-Za-z_][A-Za-z0-9_]*(?=\()", "#50fa7b")                # function calls
+            add(r"'[^'\\]*'", "#f1fa8c")                                     # strings
+            add(r'"[^"\\]*"', "#f1fa8c")
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+            add(r"//.*$", "#6272a4", italic=True)                            # comments
+
+        # ---------- CSS ----------
+        elif lang == "css":
+            add(r"\.[A-Za-z0-9_\-]+", "#8be9fd")                             # .class
+            add(r"#[A-Za-z0-9_\-]+", "#8be9fd")                              # #id
+            add(r"\b[A-Za-z\-]+(?=\s*:)", "#ff79c6")                         # properties
+            add(r":[^;]+;", "#f1fa8c")                                       # values
+            add(r"/\*.*\*/", "#6272a4", italic=True)                         # comments
+
+        # ---------- C / C++ / Java ----------
+        elif lang == "c_like":
+            c_keywords = [
+                "auto", "break", "case", "char", "const", "continue", "default",
+                "do", "double", "else", "enum", "extern", "float", "for", "goto",
+                "if", "inline", "int", "long", "register", "return", "short",
+                "signed", "sizeof", "static", "struct", "switch", "typedef",
+                "union", "unsigned", "void", "volatile", "while", "class",
+                "public", "private", "protected", "virtual", "template",
+                "typename", "namespace", "using",
+            ]
+            add(r"\b(" + "|".join(c_keywords) + r")\b", "#ff79c6", bold=True)
+            add(r"\b[A-Za-z_][A-Za-z0-9_]*(?=\()", "#50fa7b")                # function calls
+            add(r"'[^'\\]*'", "#f1fa8c")                                     # strings
+            add(r'"[^"\\]*"', "#f1fa8c")
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+            add(r"//.*$", "#6272a4", italic=True)                            # comments
+            add(r"/\*.*\*/", "#6272a4", italic=True)                         # inline block comments
+
+        # ---------- Bash ----------
+        elif lang == "bash":
+            add(r"^#!.*bash.*$", "#6272a4", italic=True)                     # shebang
+            add(r"#.*$", "#6272a4", italic=True)                             # comments
+            add(r"\b(if|then|else|fi|for|in|do|done|case|esac|function|return)\b",
+                "#ff79c6", bold=True)
+            add(r"\$[A-Za-z_][A-Za-z0-9_]*", "#8be9fd")                      # variables
+            add(r"'[^']*'", "#f1fa8c")                                       # strings
+            add(r'"[^"\\]*"', "#f1fa8c")
+            add(r"\b[0-9]+(\.[0-9]+)?\b", "#bd93f9")                         # numbers
+
+        # ---------- Batch (.bat, .cmd) ----------
+        elif lang == "batch":
+            add(r"^@?echo\s+(on|off)", "#ff79c6", bold=True)
+            add(r"\b(if|else|for|in|do|goto|call|set|echo|exit)\b",
+                "#ff79c6", bold=True)
+            add(r"REM.*$", "#6272a4", italic=True)
+            add(r"%[A-Za-z_][A-Za-z0-9_]*%", "#8be9fd")                      # variables
+
+        # ---------- Default / plain text ----------
+        else:
+            # No extra rules: text will use editor's default color
+            self.rules = []
+
+    def highlightBlock(self, text):
+        """Apply syntax rules on top of the editor's default text color."""
+        if not self.rules:
+            return
+        for regex, text_format in self.rules:
+            for match in regex.finditer(text):
+                start = match.start()
+                end = match.end()
+                if end <= start:
+                    continue
+                length = end - start
+                self.setFormat(start, length, text_format)
+
+
+# ------------------------------------------------------------- #
+#  Persistent TextEdit (keeps formatting on new lines)          #
+# ------------------------------------------------------------- #
+class PersistentTextEdit(QtWidgets.QTextEdit):
+    """
+    QTextEdit subclass that preserves the current character format
+    when pressing Enter and emits 'emptied' when the document
+    becomes completely empty.
+    """
+    emptied = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        """Function `__init__`: Auto-generated documentation placeholder."""
+        super(PersistentTextEdit, self).__init__(parent)
+        # Per-tab metadata
+        self.file_path = None
+        self.is_modified = False
+        # Syntax highlighter attached to this editor
+        self.highlighter = SimpleHighlighter(self.document())
+    def keyPressEvent(self, event):
+        """Function `keyPressEvent`: Auto-generated documentation placeholder."""
+        # Preserve formatting when inserting a new line
+        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            cursor = self.textCursor()
+            fmt = cursor.charFormat()
+            super(PersistentTextEdit, self).keyPressEvent(event)
+            cursor = self.textCursor()
+            cursor.mergeCharFormat(fmt)
+            self.mergeCurrentCharFormat(fmt)
+        else:
+            super(PersistentTextEdit, self).keyPressEvent(event)
+
+        # Emit 'emptied' when text is cleared
+        if self.toPlainText().strip() == "":
+            self.emptied.emit()
+
+
+# ------------------------------------------------------------- #
+#  Clickable label (About link)                                 #
+# ------------------------------------------------------------- #
+class ClickableLabel(QtWidgets.QLabel):
+    """Label that behaves like a hyperlink and emits 'clicked'."""
+    clicked = QtCore.Signal()
+
+    def __init__(self, text=""):
+        """Function `__init__`: Auto-generated documentation placeholder."""
+        super().__init__(text)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setStyleSheet("color: #dddddd; text-decoration: underline;")
+
+    def enterEvent(self, event):
+        """Function `enterEvent`: Auto-generated documentation placeholder."""
+        self.setStyleSheet("color: #ffffff; text-decoration: underline;")
+
+    def leaveEvent(self, event):
+        """Function `leaveEvent`: Auto-generated documentation placeholder."""
+        self.setStyleSheet("color: #dddddd; text-decoration: underline;")
+
+    def mousePressEvent(self, event):
+        """Function `mousePressEvent`: Auto-generated documentation placeholder."""
+        self.clicked.emit()
+
+
+# ------------------------------------------------------------- #
+#  HoverButton (styled push button)                             #
+# ------------------------------------------------------------- #
+class HoverButton(QtWidgets.QPushButton):
+    """Push button with a consistent dark style and hover effect."""
+    def __init__(self, text="", parent=None):
+        """Function `__init__`: Auto-generated documentation placeholder."""
+        super().__init__(text, parent)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.setStyleSheet(
+            """
+            
+            QPushButton {
+                background-color: #3a3a3a;
+                border: 1px solid #5a5a5a;
+                padding: 4px 8px;
+                border-radius: 2px;
+                color: #dddddd;
+                min-width: 0px;
+            }
+            QPushButton:hover { background-color: #444444; }
+            QPushButton:checked {
+                background-color: #505050;
+                border: 1px solid #888888;
+            }
+
+            """
+        )
+
+
+# ------------------------------------------------------------- #
+#  Find / Replace Dialog                                        #
+# ------------------------------------------------------------- #
+class FindReplaceDialog(QtWidgets.QDialog):
+    """Simple modal dialog for finding and replacing text."""
+
+    def __init__(self, parent, text_edit):
+        """Function `__init__`: Auto-generated documentation placeholder."""
+        super().__init__(parent)
+        self.text_edit = text_edit
+        self.setWindowTitle("Find / Replace")
+        self.setModal(True)
+        self.setFixedSize(300, 140)
+        self.setStyleSheet(
+            """
+            QDialog { background-color: #2c2c2c; color: #dddddd; }
+            QLineEdit {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                color: #dddddd;
+                padding: 4px;
+            }
+            QPushButton {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                padding: 4px 8px;
+                border-radius: 3px;
+                color: #dddddd;
+            }
+            QPushButton:hover { background-color: #4a4a4a; }
+            """
+        )
+
+        layout = QtWidgets.QGridLayout(self)
+
+        layout.addWidget(QtWidgets.QLabel("Find:"), 0, 0)
+        self.find_input = QtWidgets.QLineEdit()
+        layout.addWidget(self.find_input, 0, 1)
+
+        layout.addWidget(QtWidgets.QLabel("Replace:"), 1, 0)
+        self.replace_input = QtWidgets.QLineEdit()
+        layout.addWidget(self.replace_input, 1, 1)
+
+        self.find_button = QtWidgets.QPushButton("Find Next")
+        self.replace_button = QtWidgets.QPushButton("Replace")
+        self.replace_all_button = QtWidgets.QPushButton("Replace All")
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addWidget(self.find_button)
+        btn_layout.addWidget(self.replace_button)
+        btn_layout.addWidget(self.replace_all_button)
+        layout.addLayout(btn_layout, 2, 0, 1, 2)
+
+        self.find_button.clicked.connect(self.find_text)
+        self.replace_button.clicked.connect(self.replace_text)
+        self.replace_all_button.clicked.connect(self.replace_all)
+
+        self.last_search = ""
+
+    def find_text(self):
+        """Function `find_text`: Auto-generated documentation placeholder."""
+        text = self.find_input.text()
+        if not text:
+            return
+        doc = self.text_edit.document()
+        cursor = self.text_edit.textCursor()
+        if text != self.last_search:
+            cursor.movePosition(QtGui.QTextCursor.Start)
+        found = doc.find(text, cursor)
+        if found.isNull():
+            QtWidgets.QMessageBox.information(self, "Find", "No more matches found.")
+        else:
+            self.text_edit.setTextCursor(found)
+        self.last_search = text
+
+    def replace_text(self):
+        """Function `replace_text`: Auto-generated documentation placeholder."""
+        cursor = self.text_edit.textCursor()
+        if cursor.hasSelection():
+            cursor.insertText(self.replace_input.text())
+            self.find_text()
+
+    def replace_all(self):
+        """Function `replace_all`: Auto-generated documentation placeholder."""
+        text = self.find_input.text()
+        if not text:
+            return
+        replace = self.replace_input.text()
+        content = self.text_edit.toPlainText().replace(text, replace)
+        self.text_edit.setPlainText(content)
+        QtWidgets.QMessageBox.information(self, "Replace All", "All occurrences replaced.")
+
+
+# ------------------------------------------------------------- #
+#  Main Text Editor Widget                                      #
+# ------------------------------------------------------------- #
+class ColorTabBar(QtWidgets.QTabBar):
+    """Custom tab bar that lets us draw a thin colored underline per tab."""
+
+    def paintEvent(self, event):
+        """Function `paintEvent`: Auto-generated documentation placeholder."""
+        super(ColorTabBar, self).paintEvent(event)
+        painter = QtGui.QPainter(self)
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            color = self.tabTextColor(index)
+            if not color.isValid():
+                continue
+            underline_rect = QtCore.QRect(rect.left() + 4, rect.bottom() - 2, rect.width() - 8, 2)
+            painter.fillRect(underline_rect, color)
+        painter.end()
+
+
+class TextEditorWidget(QtWidgets.QWidget):
+    """Main Nuke Text Editor widget with tabs."""
+
+    DEFAULT_FONT_FAMILY = "Consolas"
+    DEFAULT_FONT_SIZE = 9
+    MAX_RECENT_FILES = 5
+
+    def __init__(self, parent=None):
+        """Function `__init__`: Auto-generated documentation placeholder."""
+        super().__init__(parent)
+        self.setWindowTitle("Text Editor")
+        self.setMinimumSize(800, 500)
+
+        # Global state per window (per tab stored on each editor)
+        self.is_modified = False
+        self.current_file_path = None
+        self.recent_files = []
+
+        # Reference to the special "+" tab dummy widget
+        self.plus_tab_dummy = None
+
+
+        # Autosave configuration (Mode C: idle + interval, silent)
+        self.autosave_interval_ms = 120000  # 2 minutes
+        self.autosave_idle_ms = 5000        # 5 seconds idle
+        self.last_edit_time = QtCore.QDateTime.currentDateTime()
+        self.last_autosave_time = QtCore.QDateTime.currentDateTime()
+        self.autosave_timer = QtCore.QTimer(self)
+        self.autosave_timer.setInterval(2000)  # check every 2 seconds
+        self.autosave_timer.timeout.connect(self.handle_autosave)
+        self.autosave_timer.start()
+
+        # Global widget style
+        self.setStyleSheet(
+            """
+            QWidget {
+                background-color: #2c2c2c;
+                color: #dddddd;
+                font-size: 11px;
+            }
+            QTextEdit {
+                background-color: #1e1e1e;
+                border: 1px solid #444444;
+                border-radius: 3px;
+                padding: 6px;
+                color: #e6e6e6;
+            }
+            QComboBox, QFontComboBox {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                padding: 2px 5px;
+                border-radius: 3px;
+                color: #dddddd;
+            }
+            QLabel { color: #e0e0e0; }
+            QMenu {
+                background-color: #3c3c3c;
+                color: #dddddd;
+            }
+            QMenu::item:selected { background-color: #555555; }
+            """
+        )
+
+        # --------------------------------------------------------- #
+        #  Central tab widget + file browser                        #
+        # --------------------------------------------------------- #
+        self.tab_widget = QtWidgets.QTabWidget(self)
+        self.tab_widget.setTabBar(ColorTabBar())
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.setMovable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+
+        # Tab bar styling + context menu + middle-click handling
+        self.tab_widget.setStyleSheet(
+            """
+            QTabBar::tab {
+                margin-top: 4px;
+                padding-left: 6px;
+                background: #2b2b2b;
+                color: #dddddd;
+                padding: 4px 8px;
+                border-top-left-radius: 3px;
+                border-top-right-radius: 3px;
+            }
+            QTabBar::tab:selected {
+                background: #3c3c3c;
+            }
+            QTabBar::tab:!selected {
+                margin-top: 2px;
+            }
+            """
+        )
+        tab_bar = self.tab_widget.tabBar()
+        tab_bar.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        tab_bar.customContextMenuRequested.connect(self.show_tab_context_menu)
+        tab_bar.tabBarClicked.connect(self.on_tab_bar_clicked)
+        tab_bar.installEventFilter(self)
+
+        # Word/character status bar label (bottom-left)
+        self.status_bar = QtWidgets.QLabel("Words: 0 | Characters: 0")
+        self.status_bar.setAlignment(QtCore.Qt.AlignLeft)
+        self.status_bar.setStyleSheet("color: #888888; padding: 4px; font-size: 10px;")
+
+        # File browser sidebar
+        self.file_browser = FileBrowser(self)
+        self.file_browser.file_selected.connect(self.load_file_from_browser)
+        # Ensure file browser starts visible and comfortable width
+        self.file_browser.setVisible(True)
+        try:
+            self.file_browser.setMinimumWidth(260)
+        except Exception:
+            pass
+
+        # Sidebar toggle is now only controlled via menu (no Files button)
+        self.sidebar_button = None
+
+        # --------------------------------------------------------- #
+        #  Formatting buttons                                       #
+        # --------------------------------------------------------- #
+        self.bold_button = HoverButton("B")
+        self.bold_button.setCheckable(True)
+        self.italic_button = HoverButton("I")
+        self.italic_button.setCheckable(True)
+        self.underline_button = HoverButton("U")
+        self.underline_button.setCheckable(True)
+        self.bullet_button = HoverButton("•")
+        self.color_button = HoverButton("Color")
+        self.highlight_button = HoverButton("Highlight")
+        self.undo_button = HoverButton("Undo")
+        self.redo_button = HoverButton("Redo")
+
+        # Alignment dropdown
+        self.align_dropdown = QtWidgets.QComboBox()
+        self.align_dropdown.addItems(["Left", "Center", "Right", "Justify"])
+        self.align_dropdown.setCurrentIndex(0)
+        self.align_dropdown.setMinimumWidth(80)
+        self.align_dropdown.setMaximumWidth(90)
+        self.align_dropdown.currentIndexChanged.connect(self.change_alignment)
+
+        # Font size combobox
+        self.fontsize_combo = QtWidgets.QComboBox()
+        self.fontsize_combo.addItems([str(i) for i in range(8, 25)])
+        self.fontsize_combo.setCurrentText(str(self.DEFAULT_FONT_SIZE))
+
+        # Font family combobox
+        self.fontfamily_combo = QtWidgets.QFontComboBox()
+        self.fontfamily_combo.setCurrentFont(QtGui.QFont(self.DEFAULT_FONT_FAMILY))
+        self.fontfamily_combo.setMaximumHeight(24)
+        self.fontfamily_combo.setMaximumWidth(130)
+        self.fontfamily_combo.setMaxVisibleItems(8)
+        self.fontfamily_combo.currentFontChanged.connect(self.preview_font)
+        self.fontfamily_combo.activated.connect(self.change_fontfamily)
+
+        # --------------------------------------------------------- #
+        #  Nuke-style menu bar (File / Edit / View / Help)          #
+        # --------------------------------------------------------- #
+        self.menu_bar = QtWidgets.QMenuBar(self)
+        self.menu_bar.setStyleSheet(
+            """
+            QMenuBar {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #1f1f1f, stop:0.95 #1f1f1f,
+                                          stop:1 #181818);
+                color: #dddddd;
+                padding-top: 5px;
+                padding-bottom: 5px;
+                border-bottom: 1px solid #444444;
+            }
+            QMenuBar::item {
+                background: transparent;
+                padding: 4px 8px;
+                spacing: 2px;
+            }
+            QMenuBar::item:selected {
+                background: #555555;
+            }
+            """
+        )
+
+        # File menu
+        file_menu = self.menu_bar.addMenu("File")
+        file_menu.addAction("New", self.new_file)
+        file_menu.addAction("New Tab", self.new_tab)
+        file_menu.addAction("Open", self.open)
+        file_menu.addAction("Save", self.save)
+        file_menu.addAction("Save As", self.save_as)
+        file_menu.addSeparator()
+        self.recent_menu_bar = file_menu.addMenu("Recent Files")
+        file_menu.addSeparator()
+        file_menu.addAction("Toggle File Browser", self.toggle_sidebar)
+        file_menu.addSeparator()
+        file_menu.addAction("Close Editor", self.close)
+
+        # Edit menu
+        edit_menu = self.menu_bar.addMenu("Edit")
+        edit_menu.addAction("Undo", self.edit_undo)
+        edit_menu.addAction("Redo", self.edit_redo)
+        edit_menu.addSeparator()
+        edit_menu.addAction("Find / Replace", self.show_find_replace)
+
+        # View menu
+        view_menu = self.menu_bar.addMenu("View")
+        view_menu.addAction("Toggle File Browser", self.toggle_sidebar)
+        view_menu.addSeparator()
+        view_menu.addAction("Word Wrap", self.toggle_word_wrap)
+
+        # Help menu
+        help_menu = self.menu_bar.addMenu("Help")
+        help_menu.addAction("About", self.show_about)
+
+        # --------------------------------------------------------- #
+        #  Toolbar layout (formatting only, full-width)             #
+        # --------------------------------------------------------- #
+        toolbar_layout = QtWidgets.QHBoxLayout()
+        toolbar_layout.setContentsMargins(3, 3, 3, 3)
+        toolbar_layout.setSpacing(6)
+        # Formatting buttons first
+        toolbar_layout.addWidget(self.bold_button)
+        toolbar_layout.addWidget(self.italic_button)
+        toolbar_layout.addWidget(self.underline_button)
+        toolbar_layout.addWidget(self.bullet_button)
+        toolbar_layout.addWidget(self.color_button)
+        toolbar_layout.addWidget(self.highlight_button)
+        toolbar_layout.addWidget(self.align_dropdown)
+        # Then font size and font family combos (no labels)
+        toolbar_layout.addWidget(self.fontsize_combo)
+        toolbar_layout.addWidget(self.fontfamily_combo)
+        # Finally undo/redo
+        toolbar_layout.addWidget(self.undo_button)
+        toolbar_layout.addWidget(self.redo_button)
+        toolbar_layout.addStretch()
+
+        # Split area: file browser + right panel (toolbar + tabs + editor)
+        right_panel = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        right_layout.addLayout(toolbar_layout)
+        right_layout.addWidget(self.tab_widget, 1)
+
+        # Bottom docked Find / Replace panel (hidden by default)
+        self.find_panel = QtWidgets.QWidget(right_panel)
+        self.find_panel.setVisible(False)
+        self.find_panel.setStyleSheet("background-color: #262626;")
+
+        find_layout = QtWidgets.QHBoxLayout(self.find_panel)
+        find_layout.setContentsMargins(6, 4, 6, 4)
+        find_layout.setSpacing(4)
+
+        self.find_input = QtWidgets.QLineEdit()
+        self.replace_input = QtWidgets.QLineEdit()
+        self.find_case_checkbox = QtWidgets.QCheckBox("Case")
+        self.find_regex_checkbox = QtWidgets.QCheckBox("Regex")
+        self.find_word_checkbox = QtWidgets.QCheckBox("Word")
+
+        self.find_prev_button = HoverButton("Prev")
+        self.find_next_button = HoverButton("Next")
+        self.find_replace_button = HoverButton("Replace")
+        self.find_replace_all_button = HoverButton("Replace All")
+        self.find_close_button = HoverButton("X")
+
+        find_layout.addWidget(QtWidgets.QLabel("Find:"))
+        find_layout.addWidget(self.find_input, 1)
+        find_layout.addWidget(QtWidgets.QLabel("Replace:"))
+        find_layout.addWidget(self.replace_input, 1)
+        find_layout.addWidget(self.find_case_checkbox)
+        find_layout.addWidget(self.find_regex_checkbox)
+        find_layout.addWidget(self.find_word_checkbox)
+        find_layout.addWidget(self.find_prev_button)
+        find_layout.addWidget(self.find_next_button)
+        find_layout.addWidget(self.find_replace_button)
+        find_layout.addWidget(self.find_replace_all_button)
+        find_layout.addWidget(self.find_close_button)
+
+        right_layout.addWidget(self.find_panel, 0)
+
+        split_layout = QtWidgets.QHBoxLayout()
+        split_layout.setContentsMargins(0, 0, 0, 0)
+        split_layout.setSpacing(0)
+        split_layout.addWidget(self.file_browser)
+        split_layout.addWidget(right_panel, 1)
+
+        # Bottom bar: word count + About label
+        about_label = ClickableLabel("About")
+        about_label.setAlignment(QtCore.Qt.AlignRight)
+        about_label.clicked.connect(self.show_about)
+
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.addWidget(self.status_bar)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(about_label)
+
+        # Main vertical layout
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setMenuBar(self.menu_bar)
+        main_layout.addLayout(split_layout)
+        main_layout.addLayout(bottom_layout)
+
+        # Connect formatting signals
+        self.bold_button.toggled.connect(self.toggle_bold)
+        self.italic_button.toggled.connect(self.toggle_italic)
+        self.underline_button.toggled.connect(self.toggle_underline)
+        self.bullet_button.clicked.connect(self.insert_bullet)
+        self.fontsize_combo.currentTextChanged.connect(self.change_fontsize)
+        self.color_button.clicked.connect(self.choose_text_color)
+        self.highlight_button.clicked.connect(self.choose_highlight_color)
+        self.undo_button.clicked.connect(self.edit_undo)
+        self.redo_button.clicked.connect(self.edit_redo)
+
+        # Find panel signal wiring
+        self.find_next_button.clicked.connect(self.find_next)
+        self.find_prev_button.clicked.connect(self.find_prev)
+        self.find_replace_button.clicked.connect(self.find_replace_one)
+        self.find_replace_all_button.clicked.connect(self.find_replace_all)
+        self.find_close_button.clicked.connect(self.hide_find_panel)
+        self.find_input.returnPressed.connect(self.find_next)
+
+        # Create first tab (this will also create the "+" tab)
+        self.create_tab("Untitled")
+
+        # Initialize status bar and recent files
+        self.update_word_count()
+        self.update_recent_files_menu()
+
+    # ------------------------------------------------------------- #
+    #  Helpers for "+" tab                                          #
+    # ------------------------------------------------------------- #
+    def _ensure_plus_tab(self):
+        """Make sure the '+' dummy tab exists and is the last tab."""
+        if self.plus_tab_dummy is None:
+            self.plus_tab_dummy = QtWidgets.QWidget()
+            plus_index = self.tab_widget.addTab(self.plus_tab_dummy, "+")
+        else:
+            plus_index = self.tab_widget.indexOf(self.plus_tab_dummy)
+            if plus_index == -1:
+                self.plus_tab_dummy = QtWidgets.QWidget()
+                plus_index = self.tab_widget.addTab(self.plus_tab_dummy, "+")
+        # Remove close button from '+' tab
+        bar = self.tab_widget.tabBar()
+        for side in (QtWidgets.QTabBar.LeftSide, QtWidgets.QTabBar.RightSide):
+            btn = bar.tabButton(plus_index, side)
+            if btn is not None:
+                btn.hide()
+                bar.setTabButton(plus_index, side, None)
+        return plus_index
+
+    # ------------------------------------------------------------- #
+    #  Event filter (for middle-click tab close)                    #
+    # ------------------------------------------------------------- #
+    def eventFilter(self, obj, event):
+        """Function `eventFilter`: Auto-generated documentation placeholder."""
+        tab_bar = self.tab_widget.tabBar()
+        if obj == tab_bar and event.type() == QtCore.QEvent.MouseButtonRelease:
+            if event.button() == QtCore.Qt.MiddleButton:
+                index = tab_bar.tabAt(event.pos())
+                if index >= 0:
+                    widget = self.tab_widget.widget(index)
+                    if widget is self.plus_tab_dummy:
+                        return True
+                    self.close_tab(index)
+                    return True
+        return QtWidgets.QWidget.eventFilter(self, obj, event)
+
+    # ------------------------------------------------------------- #
+    #  Tab helpers                                                  #
+    # ------------------------------------------------------------- #
+    def create_tab(self, title="Untitled"):
+        """Function `create_tab`: Auto-generated documentation placeholder."""
+        editor = PersistentTextEdit(self)
+        editor.setMinimumHeight(300)
+        editor.textChanged.connect(self.on_text_changed)
+        editor.textChanged.connect(self.update_word_count)
+        editor.emptied.connect(self.on_text_emptied)
+        editor.cursorPositionChanged.connect(self.update_bracket_highlight)
+        editor.cursorPositionChanged.connect(self.update_word_highlight)
+
+        if self.plus_tab_dummy is None or self.tab_widget.indexOf(self.plus_tab_dummy) == -1:
+            # No '+' tab yet: add editor, then '+'.
+            index = self.tab_widget.addTab(editor, title)
+            self._ensure_plus_tab()
+        else:
+            # Insert new editor before the '+' tab.
+            plus_index = self.tab_widget.indexOf(self.plus_tab_dummy)
+            index = self.tab_widget.insertTab(plus_index, editor, title)
+
+        # Apply default formatting and default language
+        self.apply_default_formatting(editor)
+        editor.highlighter.set_language("text")
+
+        self.tab_widget.setCurrentIndex(index)
+        self.on_tab_changed(index)
+        self.update_tab_colors()
+        return editor
+
+    def current_editor(self):
+        """Function `current_editor`: Auto-generated documentation placeholder."""
+        widget = self.tab_widget.currentWidget()
+        if isinstance(widget, QtWidgets.QTextEdit) and widget is not self.plus_tab_dummy:
+            return widget
+        return None
+
+    def on_tab_changed(self, index):
+        """Function `on_tab_changed`: Auto-generated documentation placeholder."""
+        widget = self.tab_widget.widget(index)
+        if widget is self.plus_tab_dummy:
+            # '+' tab shouldn't update editor state
+            return
+        if isinstance(widget, QtWidgets.QTextEdit):
+            self.current_file_path = getattr(widget, "file_path", None)
+            self.is_modified = getattr(widget, "is_modified", False)
+        else:
+            self.current_file_path = None
+            self.is_modified = False
+        self.update_word_count()
+        self.update_bracket_highlight()
+        self.update_word_highlight()
+        self.update_tab_colors()
+
+
+    def close_tab(self, index):
+        """Function `close_tab`: Auto-generated documentation placeholder."""
+        if index < 0:
+            return
+        editor = self.tab_widget.widget(index)
+        if editor is self.plus_tab_dummy:
+            # Never close the '+' tab
+            return
+
+        modified = getattr(editor, "is_modified", False)
+
+        if modified:
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Save Changes?",
+                "Do you want to save before closing this tab?",
+                QtWidgets.QMessageBox.Yes
+                | QtWidgets.QMessageBox.No
+                | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.Cancel,
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                self.tab_widget.setCurrentIndex(index)
+                self.save()
+            elif reply == QtWidgets.QMessageBox.Cancel:
+                return
+
+        self.tab_widget.removeTab(index)
+
+        # Ensure at least one real tab exists (besides '+')
+        real_tabs = [
+            i for i in range(self.tab_widget.count())
+            if self.tab_widget.widget(i) is not self.plus_tab_dummy
+        ]
+        if not real_tabs:
+            self.create_tab("Untitled")
+        else:
+            self.on_tab_changed(self.tab_widget.currentIndex())
+
+    # ------------------------------------------------------------- #
+    #  Advanced tab operations                                      #
+    # ------------------------------------------------------------- #
+    def on_tab_bar_clicked(self, index):
+        """Handle clicks on the tab bar (for '+' tab behaviour)."""
+        if index < 0:
+            return
+        widget = self.tab_widget.widget(index)
+        if widget is self.plus_tab_dummy:
+            self.new_tab()
+
+    def show_tab_context_menu(self, pos):
+        """Function `show_tab_context_menu`: Auto-generated documentation placeholder."""
+        tab_bar = self.tab_widget.tabBar()
+        index = tab_bar.tabAt(pos)
+        if index < 0:
+            return
+
+        widget = self.tab_widget.widget(index)
+        if widget is self.plus_tab_dummy:
+            # Right-click on '+' tab: only allow New Tab.
+            menu = QtWidgets.QMenu(self)
+            new_tab_action = menu.addAction("New Tab")
+            action = menu.exec_(tab_bar.mapToGlobal(pos))
+            if action == new_tab_action:
+                self.new_tab()
+            return
+
+        menu = QtWidgets.QMenu(self)
+
+        new_tab_action = menu.addAction("New Tab")
+        menu.addSeparator()
+        rename_action = menu.addAction("Rename Tab...")
+        duplicate_action = menu.addAction("Duplicate Tab")
+        menu.addSeparator()
+        close_action = menu.addAction("Close Tab")
+        close_others_action = menu.addAction("Close Other Tabs")
+        close_all_action = menu.addAction("Close All Tabs")
+
+        action = menu.exec_(tab_bar.mapToGlobal(pos))
+        if action == new_tab_action:
+            self.new_tab()
+        elif action == rename_action:
+            self.rename_tab(index)
+        elif action == duplicate_action:
+            self.duplicate_tab(index)
+        elif action == close_action:
+            self.close_tab(index)
+        elif action == close_others_action:
+            self.close_other_tabs(index)
+        elif action == close_all_action:
+            self.close_all_tabs()
+
+    def rename_tab(self, index):
+        """Function `rename_tab`: Auto-generated documentation placeholder."""
+        if index < 0:
+            return
+        widget = self.tab_widget.widget(index)
+        if widget is self.plus_tab_dummy:
+            return
+        current_title = self.tab_widget.tabText(index)
+        new_title, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Rename Tab",
+            "New name:",
+            text=current_title,
+        )
+        if ok and new_title.strip():
+            self.tab_widget.setTabText(index, new_title.strip())
+
+    def duplicate_tab(self, index):
+        """Function `duplicate_tab`: Auto-generated documentation placeholder."""
+        if index < 0:
+            return
+        editor = self.tab_widget.widget(index)
+        if not isinstance(editor, QtWidgets.QTextEdit) or editor is self.plus_tab_dummy:
+            return
+        text = editor.toPlainText()
+        title = self.tab_widget.tabText(index)
+        new_title = f"{title} (copy)"
+
+        new_editor = self.create_tab(new_title)
+        new_editor.setPlainText(text)
+        new_editor.file_path = None  # treat duplicate as a new unsaved document
+        new_editor.is_modified = True
+
+    def close_other_tabs(self, keep_index):
+        """Function `close_other_tabs`: Auto-generated documentation placeholder."""
+        count = self.tab_widget.count()
+        for i in reversed(range(count)):
+            if i == keep_index:
+                continue
+            widget = self.tab_widget.widget(i)
+            if widget is self.plus_tab_dummy:
+                continue
+            self.close_tab(i)
+
+    def close_all_tabs(self):
+        """Function `close_all_tabs`: Auto-generated documentation placeholder."""
+        count = self.tab_widget.count()
+        for i in reversed(range(count)):
+            widget = self.tab_widget.widget(i)
+            if widget is self.plus_tab_dummy:
+                continue
+            self.close_tab(i)
+
+    # ------------------------------------------------------------- #
+    #  Utility methods                                              #
+    # ------------------------------------------------------------- #
+    def update_word_count(self):
+        """Function `update_word_count`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            self.status_bar.setText("Words: 0 | Characters: 0")
+            return
+        text = editor.toPlainText()
+        words = len(text.split())
+        chars = len(text)
+        self.status_bar.setText(f"Words: {words} | Characters: {chars}")
+
+    def add_recent_file(self, path):
+        """Function `add_recent_file`: Auto-generated documentation placeholder."""
+        if path not in self.recent_files:
+            self.recent_files.insert(0, path)
+        self.recent_files = self.recent_files[: self.MAX_RECENT_FILES]
+        self.update_recent_files_menu()
+
+    def update_recent_files_menu(self):
+        """Function `update_recent_files_menu`: Auto-generated documentation placeholder."""
+        self.recent_menu_bar.clear()
+        if not self.recent_files:
+            self.recent_menu_bar.addAction("(No Recent Files)").setEnabled(False)
+        else:
+            for path in self.recent_files:
+                action = self.recent_menu_bar.addAction(path)
+                action.triggered.connect(
+                    lambda checked=False, p=path: self.load_file_from_browser(p)
+                )
+
+    def show_find_replace(self):
+        """Function `show_find_replace`: Show the docked find/replace panel."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        self.find_panel.setVisible(True)
+        self.find_input.setFocus()
+        self.find_input.selectAll()
+
+
+
+    # ------------------------------------------------------------- #
+    #  Find panel helpers                                           #
+    # ------------------------------------------------------------- #
+    def hide_find_panel(self):
+        """Function `hide_find_panel`: Hide the docked find/replace panel."""
+        self.find_panel.setVisible(False)
+
+    def _current_doc(self):
+        """Function `_current_doc`: Convenience to get current editor and document."""
+        editor = self.current_editor()
+        if not editor:
+            return None, None
+        return editor, editor.document()
+
+    def find_next(self):
+        """Function `find_next`: Find the next occurrence using panel settings."""
+        editor, doc = self._current_doc()
+        if not editor or not doc:
+            return
+        pattern = self.find_input.text()
+        if not pattern:
+            return
+
+        flags = QtGui.QTextDocument.FindFlags()
+        if self.find_case_checkbox.isChecked():
+            flags |= QtGui.QTextDocument.FindCaseSensitively
+
+        cursor = editor.textCursor()
+
+        # Regex or plain text search
+        if self.find_regex_checkbox.isChecked():
+            try:
+                regex = QtCore.QRegularExpression(pattern)
+            except Exception:
+                return
+            found = doc.find(regex, cursor, flags)
+        else:
+            found = doc.find(pattern, cursor, flags)
+
+        # Wrap search to start if nothing after cursor
+        if (not found) or found.isNull():
+            start_cursor = QtGui.QTextCursor(doc)
+            if self.find_regex_checkbox.isChecked():
+                regex = QtCore.QRegularExpression(pattern)
+                found = doc.find(regex, start_cursor, flags)
+            else:
+                found = doc.find(pattern, start_cursor, flags)
+
+        if found and not found.isNull():
+            editor.setTextCursor(found)
+
+    def find_prev(self):
+        """Function `find_prev`: Find the previous occurrence."""
+        editor, doc = self._current_doc()
+        if not editor or not doc:
+            return
+        pattern = self.find_input.text()
+        if not pattern:
+            return
+
+        flags = QtGui.QTextDocument.FindBackward
+        if self.find_case_checkbox.isChecked():
+            flags |= QtGui.QTextDocument.FindCaseSensitively
+
+        cursor = editor.textCursor()
+
+        if self.find_regex_checkbox.isChecked():
+            try:
+                regex = QtCore.QRegularExpression(pattern)
+            except Exception:
+                return
+            found = doc.find(regex, cursor, flags)
+        else:
+            found = doc.find(pattern, cursor, flags)
+
+        if found and not found.isNull():
+            editor.setTextCursor(found)
+
+    def find_replace_one(self):
+        """Function `find_replace_one`: Replace current selection then find next."""
+        editor, doc = self._current_doc()
+        if not editor or not doc:
+            return
+        cursor = editor.textCursor()
+        if cursor.hasSelection():
+            cursor.insertText(self.replace_input.text())
+        self.find_next()
+
+    def find_replace_all(self):
+        """Function `find_replace_all`: Replace all matches in current document."""
+        editor, doc = self._current_doc()
+        if not editor or not doc:
+            return
+        pattern = self.find_input.text()
+        if not pattern:
+            return
+        replace_text = self.replace_input.text()
+
+        flags = QtGui.QTextDocument.FindFlags()
+        if self.find_case_checkbox.isChecked():
+            flags |= QtGui.QTextDocument.FindCaseSensitively
+
+        cursor = QtGui.QTextCursor(doc)
+        cursor.beginEditBlock()
+        while True:
+            if self.find_regex_checkbox.isChecked():
+                regex = QtCore.QRegularExpression(pattern)
+                found = doc.find(regex, cursor, flags)
+            else:
+                found = doc.find(pattern, cursor, flags)
+            if (not found) or found.isNull():
+                break
+            found.insertText(replace_text)
+            cursor = found
+        cursor.endEditBlock()
+
+
+    # ------------------------------------------------------------- #
+    #  Autosave helpers (Mode C: idle + interval, silent)           #
+    # ------------------------------------------------------------- #
+    def handle_autosave(self):
+        """Function `handle_autosave`: Periodically check if we should autosave."""
+        now = QtCore.QDateTime.currentDateTime()
+        # Idle-based autosave (user stopped typing)
+        if self.last_edit_time.msecsTo(now) >= self.autosave_idle_ms:
+            self.autosave_all()
+            self.last_edit_time = now
+            self.last_autosave_time = now
+            return
+        # Interval-based autosave (safety net)
+        if self.last_autosave_time.msecsTo(now) >= self.autosave_interval_ms:
+            self.autosave_all()
+            self.last_autosave_time = now
+
+    def autosave_all(self):
+        """Function `autosave_all`: Save all modified editors with a valid file path."""
+        if not hasattr(self, "tab_widget"):
+            return
+        for index in range(self.tab_widget.count()):
+            editor = self.tab_widget.widget(index)
+            # Skip '+' tab dummy and any non-editor widgets
+            if not isinstance(editor, QtWidgets.QTextEdit):
+                continue
+            if editor is getattr(self, "plus_tab_dummy", None):
+                continue
+            path = getattr(editor, "file_path", None)
+            modified = getattr(editor, "is_modified", False)
+            if path and modified:
+                try:
+                    with self._write_text_file(path) as f:
+                        f.write(editor.toPlainText())
+                    editor.is_modified = False
+                except Exception:
+                    # Stay completely silent on autosave failures
+                    pass
+        # After autosaving, refresh tab labels (unsaved dots)
+        try:
+            self.update_tab_colors()
+        except Exception:
+            pass
+
+
+    # ------------------------------------------------------------- #
+    #  Word highlight helper (smart word matching)                  #
+    # ------------------------------------------------------------- #
+    
+    def update_word_highlight(self):
+        """Function `update_word_highlight`: Highlight repeated occurrences of the word under the cursor.
+
+        Dracula-style:
+        - active word uses a stronger background
+        - other occurrences use a softer background
+        - only highlights when there is more than one occurrence
+        """
+        editor = self.current_editor()
+        if not editor:
+            return
+
+        doc = editor.document()
+        cursor = editor.textCursor()
+        cursor.select(QtGui.QTextCursor.WordUnderCursor)
+        word = cursor.selectedText()
+
+        WORD_PROP_KEY = 1001
+
+        # Start from existing selections (e.g. bracket highlights) and
+        # strip any previous word-highlight formats that we added before.
+        base_selections = []
+        for sel in editor.extraSelections():
+            fmt = sel.format
+            try:
+                has_prop = fmt.property(WORD_PROP_KEY)
+            except Exception:
+                has_prop = None
+            if not has_prop:
+                base_selections.append(sel)
+
+        # Determine if this is a "real" word we care about.
+        if not word or not word.strip():
+            editor.setExtraSelections(base_selections)
+            return
+        if len(word) < 2:
+            editor.setExtraSelections(base_selections)
+            return
+        if not any(ch.isalnum() for ch in word):
+            editor.setExtraSelections(base_selections)
+            return
+
+        # Build a whole-word, case-sensitive regex for the word.
+        pattern = r"\b" + re.escape(word) + r"\b"
+        regex = QtCore.QRegularExpression(pattern)
+
+        text = doc.toPlainText()
+        it = regex.globalMatch(text)
+
+        highlights = []
+        active_start = cursor.selectionStart()
+        active_end = cursor.selectionEnd()
+
+        # Main and secondary highlight formats (Dracula style)
+        main_fmt = QtGui.QTextCharFormat()
+        main_fmt.setBackground(QtGui.QColor("#44475a"))
+        main_fmt.setProperty(WORD_PROP_KEY, True)
+
+        other_fmt = QtGui.QTextCharFormat()
+        other_fmt.setBackground(QtGui.QColor("#3a3c4e"))
+        other_fmt.setProperty(WORD_PROP_KEY, True)
+
+        while it.hasNext():
+            match = it.next()
+            start_pos = match.capturedStart()
+            end_pos = match.capturedEnd()
+            if start_pos < 0 or end_pos <= start_pos:
+                continue
+
+            c = QtGui.QTextCursor(doc)
+            c.setPosition(start_pos)
+            c.setPosition(end_pos, QtGui.QTextCursor.KeepAnchor)
+
+            sel = QtWidgets.QTextEdit.ExtraSelection()
+            sel.cursor = c
+            # Active word uses main_fmt; others use other_fmt.
+            if start_pos == active_start and end_pos == active_end:
+                sel.format = main_fmt
+            else:
+                sel.format = other_fmt
+            highlights.append(sel)
+
+        # If there is only one occurrence (the current word), do not highlight at all.
+        if len(highlights) <= 1:
+            editor.setExtraSelections(base_selections)
+            return
+
+        editor.setExtraSelections(base_selections + highlights)
+
+    # ------------------------------------------------------------- #
+    #  Bracket matching and tab color helpers                       #
+    # ------------------------------------------------------------- #
+    def update_bracket_highlight(self):
+        """Function `update_bracket_highlight`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        text = editor.toPlainText()
+        cursor = editor.textCursor()
+        pos = cursor.position()
+        if not text:
+            editor.setExtraSelections([])
+            return
+
+        brackets = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
+        opening = "([{"
+        closing = ")]}"
+
+        def match_pos(start_index, forward):
+            """Function `match_pos`: Auto-generated documentation placeholder."""
+            stack = 0
+            step = 1 if forward else -1
+            i = start_index
+            while 0 <= i < len(text):
+                ch = text[i]
+                if ch == ch_open:
+                    stack += 1
+                elif ch == ch_close:
+                    stack -= 1
+                    if stack == 0:
+                        return i
+                i += step
+            return -1
+
+        # Determine the bracket under or next to the cursor
+        if pos > 0 and text[pos - 1] in brackets:
+            ch = text[pos - 1]
+            idx = pos - 1
+        elif pos < len(text) and text[pos] in brackets:
+            ch = text[pos]
+            idx = pos
+        else:
+            # No bracket at cursor: clear any previous selection
+            editor.setExtraSelections([])
+            return
+
+        ch_match = brackets[ch]
+        if ch in opening:
+            ch_open, ch_close = ch, ch_match
+            partner_index = match_pos(idx, True)
+        else:
+            ch_open, ch_close = ch_match, ch
+            partner_index = match_pos(idx, False)
+
+        selections = []
+        # Format for a valid bracket pair
+        pair_fmt = QtGui.QTextCharFormat()
+        pair_fmt.setBackground(QtGui.QColor("#44475a"))
+
+        # Format for an unmatched / error bracket
+        error_fmt = QtGui.QTextCharFormat()
+        error_fmt.setBackground(QtGui.QColor("#ff5555"))
+
+        if partner_index == -1:
+            # Unmatched bracket -> highlight the single one in red
+            c = QtGui.QTextCursor(editor.document())
+            c.setPosition(idx)
+            c.movePosition(QtGui.QTextCursor.NextCharacter, QtGui.QTextCursor.KeepAnchor)
+            sel = QtWidgets.QTextEdit.ExtraSelection()
+            sel.cursor = c
+            sel.format = error_fmt
+            selections.append(sel)
+            editor.setExtraSelections(selections)
+            return
+
+        # Valid pair -> highlight both
+        for i in (idx, partner_index):
+            c = QtGui.QTextCursor(editor.document())
+            c.setPosition(i)
+            c.movePosition(QtGui.QTextCursor.NextCharacter, QtGui.QTextCursor.KeepAnchor)
+            sel = QtWidgets.QTextEdit.ExtraSelection()
+            sel.cursor = c
+            sel.format = pair_fmt
+            selections.append(sel)
+
+        editor.setExtraSelections(selections)
+
+
+    def update_tab_colors(self):
+        """Function `update_tab_colors`: Auto-generated documentation placeholder."""
+        tab_bar = self.tab_widget.tabBar()
+        for index in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(index)
+            if widget is self.plus_tab_dummy:
+                continue
+            editor = widget
+            path = getattr(editor, "file_path", None)
+            if not path:
+                color = FILETYPE_TAB_COLORS.get("text")
+                base = "Untitled"
+            else:
+                ext = os.path.splitext(path)[1].lower()
+                lang = EXTENSION_LANGUAGE.get(ext, "text")
+                color = FILETYPE_TAB_COLORS.get(lang, FILETYPE_TAB_COLORS.get("text"))
+                base = os.path.basename(path)
+            # append unsaved dot
+            if getattr(editor, "is_modified", False):
+                label = base + " ●"
+            else:
+                label = base
+            self.tab_widget.setTabText(index, label)
+            tab_bar.setTabTextColor(index, color)
+
+    # ------------------------------------------------------------- #
+    #  Core text & formatting methods                               #
+    # ------------------------------------------------------------- #
+    def apply_default_formatting(self, editor=None):
+        """Function `apply_default_formatting`: Auto-generated documentation placeholder."""
+        if editor is None:
+            editor = self.current_editor()
+        if not editor:
+            return
+        fmt = QtGui.QTextCharFormat()
+        fmt.setFont(QtGui.QFont(self.DEFAULT_FONT_FAMILY, self.DEFAULT_FONT_SIZE))
+        fmt.setForeground(QtGui.QBrush(QtGui.QColor("#e6e6e6")))
+        fmt.setBackground(QtGui.QBrush(QtGui.QColor("#1e1e1e")))
+        editor.setCurrentCharFormat(fmt)
+        editor.document().setDefaultFont(
+            QtGui.QFont(self.DEFAULT_FONT_FAMILY, self.DEFAULT_FONT_SIZE)
+        )
+
+        try:
+            fm = editor.fontMetrics()
+            editor.setTabStopDistance(fm.horizontalAdvance(" ") * INDENT_TAB_SIZE)
+        except Exception:
+            pass
+
+    def on_text_emptied(self):
+        """Function `on_text_emptied`: Auto-generated documentation placeholder."""
+        sender = self.sender()
+        if isinstance(sender, QtWidgets.QTextEdit):
+            self.apply_default_formatting(sender)
+
+    def toggle_sidebar(self):
+        """Function `toggle_sidebar`: Auto-generated documentation placeholder."""
+        visible = not self.file_browser.isVisible()
+        self.file_browser.setVisible(visible)
+
+    def on_text_changed(self):
+        """Function `on_text_changed`: Triggered whenever the current editor text changes."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        # Mark modified flags on both the editor and the window
+        editor.is_modified = True
+        self.is_modified = True
+        self.current_file_path = getattr(editor, "file_path", None)
+        # Update autosave idle timestamp and live highlights
+        self.last_edit_time = QtCore.QDateTime.currentDateTime()
+        self.update_bracket_highlight()
+        self.update_word_highlight()
+
+
+    def change_alignment(self, index):
+        """Function `change_alignment`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        if index == 0:
+            editor.setAlignment(QtCore.Qt.AlignLeft)
+        elif index == 1:
+            editor.setAlignment(QtCore.Qt.AlignCenter)
+        elif index == 2:
+            editor.setAlignment(QtCore.Qt.AlignRight)
+        elif index == 3:
+            editor.setAlignment(QtCore.Qt.AlignJustify)
+
+    # ------------------------------------------------------------- #
+    #  File helper functions (encoding-safe)                        #
+    # ------------------------------------------------------------- #
+    def _read_text_file(self, path):
+        """Read a text file using UTF-8, compatible with Py2/Py3."""
+        return io.open(path, "r", encoding="utf-8")
+
+    def _write_text_file(self, path):
+        """Write a text file using UTF-8, compatible with Py2/Py3."""
+        return io.open(path, "w", encoding="utf-8")
+
+    def _apply_language_for_editor(self, editor):
+        """Set syntax language based on editor.file_path."""
+        if not isinstance(editor, PersistentTextEdit):
+            return
+        path = getattr(editor, "file_path", None)
+        if not path:
+            editor.highlighter.set_language("text")
+            return
+        ext = os.path.splitext(path)[1].lower()
+        language = EXTENSION_LANGUAGE.get(ext, "text")
+        editor.highlighter.set_language(language)
+
+    # ------------------------------------------------------------- #
+    #  File operations                                              #
+    # ------------------------------------------------------------- #
+    def new_tab(self):
+        """Function `new_tab`: Auto-generated documentation placeholder."""
+        self.create_tab("Untitled")
+
+    def new_file(self):
+        """Function `new_file`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        if getattr(editor, "is_modified", False):
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Save Changes?",
+                "Do you want to save before creating a new file?",
+                QtWidgets.QMessageBox.Yes
+                | QtWidgets.QMessageBox.No
+                | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.Cancel,
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                self.save()
+            elif reply == QtWidgets.QMessageBox.Cancel:
+                return
+
+        editor.clear()
+        editor.file_path = None
+        editor.is_modified = False
+        self.is_modified = False
+        self.current_file_path = None
+        self.bold_button.setChecked(False)
+        self.italic_button.setChecked(False)
+        self.underline_button.setChecked(False)
+        self.apply_default_formatting(editor)
+        editor.highlighter.set_language("text")
+
+        index = self.tab_widget.indexOf(editor)
+        if index >= 0:
+            self.tab_widget.setTabText(index, "Untitled")
+
+        self.update_word_count()
+
+    def load_file_from_browser(self, path):
+        """Always open browser-selected files in a new tab."""
+        editor = self.create_tab(os.path.basename(path))
+        try:
+            with self._read_text_file(path) as f:
+                editor.setPlainText(f.read())
+
+            editor.file_path = path
+            editor.is_modified = False
+            self.current_file_path = path
+            self.is_modified = False
+            self.add_recent_file(path)
+            self._apply_language_for_editor(editor)
+
+            index = self.tab_widget.indexOf(editor)
+            if index >= 0:
+                self.tab_widget.setTabText(index, os.path.basename(path))
+
+            self.update_word_count()
+            self.update_tab_colors()
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "Could not open file:\n{}".format(e)
+            )
+
+    def save(self):
+        """Function `save`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+
+        path = getattr(editor, "file_path", None)
+
+        if path:
+            try:
+                with self._write_text_file(path) as f:
+                    f.write(editor.toPlainText())
+                self.add_recent_file(path)
+                editor.is_modified = False
+                self.is_modified = False
+                self.current_file_path = path
+                # Refresh tab labels after saving (clear unsaved dot)
+                self.update_tab_colors()
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "Error", "Could not save file:\n{}".format(e)
+                )
+        else:
+            self.save_as()
+
+    def save_as(self):
+        """Function `save_as`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save As", "", "Text Files (*.txt);;All Files (*)"
+        )
+        if path:
+            if not path.lower().endswith(".txt"):
+                path += ".txt"
+            try:
+                with self._write_text_file(path) as f:
+                    f.write(editor.toPlainText())
+
+                editor.file_path = path
+                editor.is_modified = False
+                self.current_file_path = path
+                self.is_modified = False
+                self.add_recent_file(path)
+                self._apply_language_for_editor(editor)
+
+                index = self.tab_widget.indexOf(editor)
+                if index >= 0:
+                    self.tab_widget.setTabText(index, os.path.basename(path))
+                self.update_tab_colors()
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "Error", "Could not save file\n{}".format(e)
+                )
+
+    def open(self):
+        """Function `open`: Auto-generated documentation placeholder."""
+        filename, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open File")
+        if filename:
+            editor = self.create_tab(os.path.basename(filename))
+            try:
+                with self._read_text_file(filename) as f:
+                    editor.setPlainText(f.read())
+
+                editor.file_path = filename
+                editor.is_modified = False
+                self.current_file_path = filename
+                self.is_modified = False
+                self.add_recent_file(filename)
+                self._apply_language_for_editor(editor)
+
+                index = self.tab_widget.indexOf(editor)
+                if index >= 0:
+                    self.tab_widget.setTabText(index, os.path.basename(filename))
+
+                self.update_word_count()
+                self.update_tab_colors()
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Failed to open file:\n{filename}\n\n{e}",
+                )
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "Error", "Could not open file:\n{}".format(e)
+                )
+
+    # ------------------------------------------------------------- #
+    #  Formatting / About / Close                                   #
+    # ------------------------------------------------------------- #
+    def preview_font(self, font):
+        """Function `preview_font`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        fmt = QtGui.QTextCharFormat()
+        fmt.setFontFamily(font.family())
+        editor.mergeCurrentCharFormat(fmt)
+
+    def change_fontsize(self, size_str):
+        """Function `change_fontsize`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        fmt = QtGui.QTextCharFormat()
+        fmt.setFontPointSize(int(size_str))
+        editor.mergeCurrentCharFormat(fmt)
+
+    def change_fontfamily(self, font):
+        """Function `change_fontfamily`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        fmt = QtGui.QTextCharFormat()
+        fmt.setFontFamily(font.family())
+        editor.mergeCurrentCharFormat(fmt)
+
+    def toggle_bold(self, checked):
+        """Function `toggle_bold`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        fmt = editor.currentCharFormat()
+        fmt.setFontWeight(QtGui.QFont.Bold if checked else QtGui.QFont.Normal)
+        editor.mergeCurrentCharFormat(fmt)
+
+    def toggle_italic(self, checked):
+        """Function `toggle_italic`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        fmt = editor.currentCharFormat()
+        fmt.setFontItalic(checked)
+        editor.mergeCurrentCharFormat(fmt)
+
+    def toggle_underline(self, checked):
+        """Function `toggle_underline`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        fmt = editor.currentCharFormat()
+        fmt.setFontUnderline(checked)
+        editor.mergeCurrentCharFormat(fmt)
+
+    def choose_text_color(self):
+        """Function `choose_text_color`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        color = QtWidgets.QColorDialog.getColor()
+        if color.isValid():
+            fmt = editor.currentCharFormat()
+            fmt.setForeground(QtGui.QBrush(color))
+            editor.mergeCurrentCharFormat(fmt)
+
+    def choose_highlight_color(self):
+        """Function `choose_highlight_color`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        color = QtWidgets.QColorDialog.getColor()
+        if color.isValid():
+            fmt = editor.currentCharFormat()
+            fmt.setBackground(QtGui.QBrush(color))
+            editor.mergeCurrentCharFormat(fmt)
+
+    def edit_undo(self):
+        """Function `edit_undo`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if editor:
+            editor.undo()
+
+    def edit_redo(self):
+        """Function `edit_redo`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if editor:
+            editor.redo()
+
+    def insert_bullet(self):
+        """Function `insert_bullet`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        cursor = editor.textCursor()
+        cursor.insertText("• ")
+        editor.setTextCursor(cursor)
+
+    def toggle_word_wrap(self):
+        """Function `toggle_word_wrap`: Auto-generated documentation placeholder."""
+        editor = self.current_editor()
+        if not editor:
+            return
+        mode = editor.lineWrapMode()
+        if mode == QtWidgets.QTextEdit.NoWrap:
+            editor.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
+        else:
+            editor.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
+
+    def show_about(self):
+        """Function `show_about`: Auto-generated documentation placeholder."""
+        msg = QtWidgets.QMessageBox(self)
+        msg.setWindowTitle("About")
+        msg.setIcon(QtWidgets.QMessageBox.Information)
+        msg.setTextFormat(QtCore.Qt.RichText)
+        msg.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
+        msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg.setText(
+            """Nuke Text Editor 7 (Safe Syntax Highlight, No Color Schemes)<br>Pedro Gartner<br>
+        <a href='https://github.com/PedroGartner' style='text-decoration: underline; color: #ffffff;'>GitHub</a>"""
+        )
+        msg.exec_()
+
+    def closeEvent(self, event):
+        """Function `closeEvent`: Auto-generated documentation placeholder."""
+        # Check all tabs for unsaved changes
+        for index in range(self.tab_widget.count()):
+            editor = self.tab_widget.widget(index)
+            if isinstance(editor, QtWidgets.QTextEdit) and editor is not self.plus_tab_dummy:
+                if getattr(editor, "is_modified", False):
+                    self.tab_widget.setCurrentIndex(index)
+                    reply = QtWidgets.QMessageBox.question(
+                        self,
+                        "Save Changes?",
+                        "Do you want to save before closing the editor?",
+                        QtWidgets.QMessageBox.Yes
+                        | QtWidgets.QMessageBox.No
+                        | QtWidgets.QMessageBox.Cancel,
+                        QtWidgets.QMessageBox.Cancel,
+                    )
+                    if reply == QtWidgets.QMessageBox.Yes:
+                        self.save()
+                        continue
+                    elif reply == QtWidgets.QMessageBox.Cancel:
+                        event.ignore()
+                        return
+        event.accept()
+
+
+# ------------------------------------------------------------- #
+#  Launch in Nuke                                                #
+# ------------------------------------------------------------- #
+def show_texteditor():
+    """Show or raise the global Nuke Text Editor instance."""
+    global _text_editor_instance
+    try:
+        if _text_editor_instance and _text_editor_instance.isVisible():
+            _text_editor_instance.raise_()
+            _text_editor_instance.activateWindow()
+            return _text_editor_instance
+    except Exception:
+        _text_editor_instance = None
+
+    _text_editor_instance = TextEditorWidget()
+    _text_editor_instance.show()
+    return _text_editor_instance
