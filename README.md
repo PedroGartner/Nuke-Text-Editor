@@ -1,132 +1,53 @@
 
-# Nuke Text Editor 7  
-Advanced Text Editor Panel for Nuke  
-Author: **Pedro Gartner**
+# Nuke Text Editor
 
----
+A lightweight and practical text editor panel for Nuke.  
+Designed to provide a simple, reliable workspace for writing notes, editing text files, reviewing shot documentation, and organizing information directly inside Nuke without leaving the application.
 
-## Overview
-Nuke Text Editor 7 was created to solve a real problem I faced while working both remotely and locally inside Nuke:  
-**there was no clean, reliable place to write notes for the shots I was working on.**
-
-This tool provides a dedicated workspace for:
-- personal shot notes  
-- notes to share with supervisors  
-- importing notes from other artists or other shots  
-- organizing project information clearly inside Nuke  
-- keeping everything in one place  
-
-It has evolved into a full-featured editor with a modern UI, safe syntax highlighting, autosave, and a multi-tab system — all stable inside Nuke's environment.
+This tool was created to solve a common workflow gap: having a clear, accessible place to write and manage notes while working on shots, whether locally or remotely.
 
 ---
 
 ## Features
 
-### 🔹 Multi-Tab System
-- Inline **"+"** new-tab button  
-- Drag-and-drop tab reordering  
-- Middle-click to close  
-- Tab context menu (rename, duplicate, close others/all)  
-- Per-tab file tracking  
-- Color-coded underline per file type  
+- **Integrated File Browser**  
+  Navigate folders, open text files, create new folders, delete items, and filter results with a built‑in search.
 
-### 🔹 Safe Regex-Based Syntax Highlighting
-Supports:
-- Python  
-- JSON  
-- Markdown  
-- Nuke `.nk`  
-- INI / CFG  
-- HTML / XML  
-- JS / TS  
-- CSS  
-- C / C++ / Java  
-- Bash  
-- Batch  
-- Plain text  
+- **Multi‑Tab Editing**  
+  Open multiple documents at once, duplicate tabs, rename tabs, or create new tabs using the inline “+” button.
 
-Designed to be:
-- Nuke-safe  
-- PySide2 & PySide6 compatible  
-- Medium-level (stable & predictable)
+- **Syntax Highlighting**  
+  Safe, lightweight, regex‑based highlighting for a variety of common file types:
+  Python, JSON, Markdown, Nuke `.nk`, HTML/XML, CSS, JavaScript, Bash, Batch, C/C++/Java, and more.
 
-### 🔹 Word Repetition Highlighting
-Highlights:
-- The active word under cursor  
-- All repeated occurrences in the document  
-Using Dracula-style soft contrast.
+- **Find & Replace Panel**  
+  Docked, persistent panel with:
+  - case‑sensitive search  
+  - regex mode  
+  - whole‑word search  
+  - replace one / replace all  
+  - navigation through results  
 
-### 🔹 Bracket Matching
-Highlights matching parentheses, square brackets, and curly brackets.  
-Unmatched brackets show a red highlight.
+- **Word & Bracket Highlighting**  
+  Automatically highlights repeated words under the cursor and matching bracket pairs.
 
-### 🔹 Integrated File Browser
-- Browse disk  
-- Click to open a file in a NEW tab  
-- Create folders  
-- Refresh view  
-- Delete items  
+- **Autosave**  
+  Silent autosave using idle‑based and interval‑based triggers.
 
-### 🔹 Autosave (Mode C)
-Silent autosave:
-- Idle-based (5 seconds after no typing)  
-- Interval-based (every 2 minutes)  
-Saves only files with valid paths.
+- **Formatting Tools**  
+  Bold, italic, underline, bullets, alignment, text color, highlight color, font size, and font family.
 
-### 🔹 Docked Find / Replace Panel
-- Case sensitivity  
-- Regex mode  
-- Whole-word search  
-- Replace one  
-- Replace all  
+- **Status Bar**  
+  Live word and character count.
 
-### 🔹 Formatting Tools
-- Bold  
-- Italic  
-- Underline  
-- Text color  
-- Highlight color  
-- Bullets  
-- Alignment controls  
-- Font family  
-- Font size  
-- Undo / Redo  
-
----
-
-## Current Limitations / Work in Progress
-
-While the tool is stable for everyday production use, a few areas are still being improved:
-
-### 🔸 UI & Highlighting  
-- Occasional **color/highlight bugs** when switching fonts or applying styles  
-- Some cases where highlight removal doesn't refresh instantly  
-
-### 🔸 Tab System  
-- Minor **tab movement bugs** when dragging quickly  
-- Rare cases where dragging near the "+" tab jumps the tab order  
-
-### 🔸 File Browser Search  
-- Search in the file browser is not 100% accurate  
-- Future update planned to include fuzzy search, filtering, and performance improvements  
-
-### 🔸 Missing Keyboard Shortcuts  
-Planned additions:
-- Ctrl+S (Save)  
-- Ctrl+Shift+S (Save As)  
-- Ctrl+N (New Tab)  
-- Ctrl+F (Find)  
-- Ctrl+W (Close Tab)  
-- Ctrl+Z / Ctrl+Y (Undo/Redo)  
-- Ctrl+Plus / Minus (Future zoom features)  
-
-Shortcuts will be added in a future update in a clean, Nuke-safe implementation.
+- **About Panel**  
+  Displays basic tool information and project links.
 
 ---
 
 ## Installation
 
-Place these files in your **.nuke** folder:
+1. Download the following files:
 
 ```
 TextEditor.py
@@ -134,32 +55,70 @@ FileBrowser.py
 menu.py
 ```
 
-In your `menu.py`, add:
+2. Place them into your Nuke plugin directory, for example:
+
+```
+~/.nuke/
+```
+
+3. Add the following line inside your `menu.py` file:
 
 ```python
 import TextEditor
-nuke.menu('Nuke').addCommand('PGartner/Text Editor', 'TextEditor.show_texteditor()')
+nuke.menu('Nuke').addCommand('Text Editor', 'TextEditor.show_texteditor()')
 ```
 
-Restart Nuke and access it via:
+4. Restart Nuke.
 
-**PGartner → Text Editor**
+You will now find the editor in:
+```
+Text Editor
+```
+under the main Nuke menu.
 
 ---
 
-## File Structure
+## Supported Platforms
 
-```
-├── TextEditor.py    # Main UI + logic
-├── FileBrowser.py   # Collapsible sidebar file browser
-└── menu.py          # Nuke menu integration
-```
+- Nuke 11+  
+- Compatible with both **PySide2** and **PySide6**
+- Windows, macOS, and Linux
 
 ---
 
-## Author
-**Pedro Gartner**  
-- GitHub: https://github.com/PedroGartner  
-- LinkedIn: https://www.linkedin.com/in/pedro-g-6b265a13a/  
-- IMDB: https://www.imdb.com/pt/name/nm9884333/  
+## Customization
+
+Many parts of the tool can be customized:
+
+- default fonts and font sizes  
+- syntax color definitions  
+- autosave timing  
+- tab colors and behaviors  
+- file browser root directory  
+- toolbar layout and available formatting tools  
+
+For deeper customization, the code is well‑commented, with clear entry points for modification.
+
+---
+
+## Known Limitations
+
+- Some highlight color combinations may behave inconsistently depending on system themes.
+- Occasional tab‑movement quirks when dragging very quickly.
+- File browser search accuracy improvements planned.
+- Keyboard shortcut system is not yet fully implemented.
+
+---
+
+## License
+
+See **LICENSE** for details.
+
+---
+
+## Authors & Contact
+
+Created by **Pedro Gartner**  
+LinkedIn: https://www.linkedin.com/in/pedro-g-6b265a13a/  
+GitHub: https://github.com/PedroGartner
 
