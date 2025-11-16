@@ -1822,7 +1822,7 @@ class TextEditorWidget(QtWidgets.QWidget):
         msg.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
         msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
         msg.setText(
-            """Nuke Text Editor 7 (Safe Syntax Highlight, No Color Schemes)<br>Pedro Gartner<br>
+            """Nuke Text Editor<br>Pedro Gartner<br>
         <a href='https://github.com/PedroGartner' style='text-decoration: underline; color: #ffffff;'>GitHub</a>"""
         )
         msg.exec_()
