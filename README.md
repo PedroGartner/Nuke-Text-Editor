@@ -1,14 +1,13 @@
 
 # Nuke Text Editor
 
-![Nuke Text Editor Screenshot](TextEditor.png)
-
-
-
 A lightweight and practical text editor panel for Nuke.  
 Designed to provide a simple, reliable workspace for writing notes, editing text files, reviewing shot documentation, and organizing information directly inside Nuke without leaving the application.
 
 This tool was created to solve a common workflow gap: having a clear, accessible place to write and manage notes while working on shots, whether locally or remotely.
+
+![Nuke Text Editor Screenshot](TextEditor.png)
+
 
 ---
 
