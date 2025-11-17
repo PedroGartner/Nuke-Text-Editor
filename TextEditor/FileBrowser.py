@@ -10,7 +10,13 @@
 #  - Keeps same style, alignment, and dark theme.               #
 # ------------------------------------------------------------- #
 
-from PySide6 import QtCore, QtGui, QtWidgets
+try:
+    # Nuke 13 and similar environments (Qt5 / PySide2)
+    from PySide2 import QtCore, QtGui, QtWidgets
+except ImportError:
+    # Nuke 16+ or environments that ship PySide6 only
+    from PySide6 import QtCore, QtGui, QtWidgets
+
 import os
 import shutil
 
