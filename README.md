@@ -11,7 +11,7 @@ This tool was created to solve a common workflow gap: having a clear, accessible
 
 ---
 
- ##Features
+ ## Features
 
 - **Integrated File Browser**  
   Navigate folders, open text files, create new folders, delete items, and filter results with a built-in search sidebar.
