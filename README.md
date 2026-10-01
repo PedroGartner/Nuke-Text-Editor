@@ -376,7 +376,7 @@ These tools are not required for the core Text Editor.
 
 ## Repository
 
-https://github.com/PedroGartner/Nuke-Text-Editor
+https://github.com/PedroGartner/NukeTextEditor
 
 ---
 
